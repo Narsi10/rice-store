@@ -1,0 +1,25 @@
+# IP-only override — use when you DON'T have a domain yet.
+# Serves the app over plain HTTP on the VM's public IP, without Caddy/HTTPS
+# (Let's Encrypt can't issue certs for a bare IP).
+#
+# Run it layered on top of the prod file:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ip.yml --env-file .env up -d
+#
+# Then browse:  http://YOUR_VM_IP        (frontend)
+# The frontend talks to the gateway at   http://YOUR_VM_IP:8000
+
+services:
+  # Publish the gateway directly on port 8000.
+  gateway:
+    ports:
+      - "8000:8080"
+
+  # Publish the frontend directly on port 80 (no Caddy in front).
+  frontend:
+    ports:
+      - "80:80"
+
+  # Disable Caddy for IP-only mode (it needs a domain for HTTPS).
+  caddy:
+    profiles:
+      - donotstart
