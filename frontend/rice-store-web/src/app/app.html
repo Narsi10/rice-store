@@ -1,0 +1,477 @@
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand" (click)="view.set('catalog')">🌾 <span>Rice Store</span></div>
+    <input
+      class="search"
+      type="text"
+      placeholder="Search rice, brands..."
+      (input)="onSearch($event)"
+      *ngIf="view() === 'catalog'"
+    />
+    <nav class="nav">
+      <button class="nav-link" [class.active]="view() === 'catalog'" (click)="view.set('catalog')">
+        Shop
+      </button>
+      <button class="nav-link" [class.active]="view() === 'orders'" (click)="goToOrders()" *ngIf="!isAdmin()">
+        My Orders
+        <span class="badge dark" *ngIf="store.orderCount() > 0">{{ store.orderCount() }}</span>
+      </button>
+      <button class="nav-link" [class.active]="view() === 'admin'" (click)="goToAdmin()" *ngIf="isAdmin()">
+        Admin
+        <span class="badge dark" *ngIf="store.pendingReviewCount() > 0">{{ store.pendingReviewCount() }}</span>
+      </button>
+    </nav>
+    <button class="cart-btn" (click)="cartOpen.set(!cartOpen())">
+      🛒 Cart
+      <span class="badge" *ngIf="store.cartCount() > 0">{{ store.cartCount() }}</span>
+    </button>
+
+    <div class="bell-wrap" *ngIf="auth.isLoggedIn() && !isAdmin()">
+      <button class="bell-btn" (click)="toggleNotifications()">
+        🔔
+        <span class="badge" *ngIf="store.unreadCount() > 0">{{ store.unreadCount() }}</span>
+      </button>
+
+      <div class="notif-panel" *ngIf="notifOpen()">
+        <div class="notif-head">
+          <strong>Notifications</strong>
+          <button
+            class="notif-clear"
+            *ngIf="store.myNotifications().length > 0"
+            (click)="store.clearMyNotifications()"
+          >Clear all</button>
+        </div>
+        <div class="notif-empty" *ngIf="store.myNotifications().length === 0">
+          No notifications yet.
+        </div>
+        <div
+          class="notif-item"
+          *ngFor="let n of store.myNotifications()"
+          [class.unread]="!n.read"
+        >
+          <span class="notif-icon">{{ n.type === 'approved' ? '✅' : n.type === 'rejected' ? '❌' : 'ℹ️' }}</span>
+          <div class="notif-body">
+            <p>{{ n.message }}</p>
+            <span class="notif-time">{{ n.createdOnUtc | date: 'short' }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="account" *ngIf="auth.isLoggedIn(); else loginBtn">
+      <span class="hi">Hi, {{ auth.user()?.fullName }}</span>
+      <button class="nav-link" (click)="logout()">Logout</button>
+    </div>
+    <ng-template #loginBtn>
+      <button class="btn-primary login-btn" (click)="openAuth('login')">Sign in</button>
+    </ng-template>
+  </div>
+</header>
+
+<div class="banner" *ngIf="store.usingMockData()">
+  Showing sample data — start the backend (<code>docker compose up</code>) to load live products.
+</div>
+
+<div class="toast" *ngIf="orderPlaced()">
+  ✅ Order placed! It's now awaiting admin approval.
+</div>
+
+<main class="container" *ngIf="view() === 'catalog'">
+  <section class="hero">
+    <h1>Premium rice, delivered to your door</h1>
+    <p>Basmati, brown, jasmine, sona masoori and more — sourced from trusted brands.</p>
+  </section>
+
+  <div class="filters">
+    <button
+      *ngFor="let f of filters"
+      class="chip"
+      [class.active]="activeType() === f.value"
+      (click)="activeType.set(f.value)"
+    >
+      {{ f.label }}
+    </button>
+  </div>
+
+  <section class="grid">
+    <article class="card" *ngFor="let p of visibleProducts()">
+      <div class="thumb" [style.background]="swatch(p.riceType)">
+        <span class="thumb-label">{{ riceTypeLabel[p.riceType] }}</span>
+      </div>
+      <div class="card-body">
+        <h3>{{ p.name }}</h3>
+        <p class="brand">{{ p.brand }} · {{ p.weightKg }}kg</p>
+        <p class="desc">{{ p.description }}</p>
+        <div class="card-footer">
+          <span class="price">{{ p.price | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+          <button class="btn-primary" (click)="add(p)">Add to cart</button>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <p class="empty" *ngIf="visibleProducts().length === 0">
+    No rice matches your search.
+  </p>
+</main>
+
+<!-- Orders / history view -->
+<main class="container" *ngIf="view() === 'orders'">
+  <section class="hero">
+    <h1>My Orders</h1>
+    <p>Your placed orders and their status.</p>
+  </section>
+
+  <div class="orders-empty" *ngIf="store.orders().length === 0">
+    <p>You haven't placed any orders yet.</p>
+    <button class="btn-primary" (click)="view.set('catalog')">Start shopping</button>
+  </div>
+
+  <div class="order-list" *ngIf="store.orders().length > 0">
+    <article class="order-card" *ngFor="let o of store.orders()">
+      <div class="order-head">
+        <div>
+          <span class="order-id">Order #{{ o.id.substring(0, 8) | uppercase }}</span>
+          <span class="order-date">{{ o.createdOnUtc | date: 'medium' }}</span>
+        </div>
+        <span class="status status-{{ o.status }}">{{ orderStatusLabel[o.status] }}</span>
+      </div>
+
+      <ul class="order-items">
+        <li *ngFor="let i of o.items">
+          <span>{{ i.quantity }} × {{ i.productName }}</span>
+          <span>{{ i.unitPrice * i.quantity | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        </li>
+      </ul>
+
+      <div class="order-pay" *ngIf="o.paymentMethod">
+        Paid via {{ o.paymentMethod }} ({{ o.paymentInstrument }})
+      </div>
+
+      <div class="order-foot">
+        <span>Total</span>
+        <strong>{{ o.totalAmount | currency: 'INR' : 'symbol' : '1.0-0' }}</strong>
+      </div>
+
+      <!-- Only awaiting-approval orders can be cancelled by the customer. -->
+      <div class="order-actions" *ngIf="o.status === 3">
+        <button class="btn-cancel" (click)="cancelOrder(o.id)">Cancel order</button>
+      </div>
+    </article>
+  </div>
+</main>
+
+<!-- Admin console -->
+<main class="container" *ngIf="view() === 'admin' && isAdmin()">
+  <section class="hero">
+    <h1>Admin Console</h1>
+    <p>Manage products, review orders, and track sales.</p>
+  </section>
+
+  <div class="admin-subtabs">
+    <button class="subtab" [class.active]="adminTab() === 'orders'" (click)="adminTab.set('orders'); store.loadAllOrders()">
+      Orders <span class="badge dark" *ngIf="store.pendingReviewCount() > 0">{{ store.pendingReviewCount() }}</span>
+    </button>
+    <button class="subtab" [class.active]="adminTab() === 'products'" (click)="adminTab.set('products')">Products</button>
+    <button class="subtab" [class.active]="adminTab() === 'reports'" (click)="adminTab.set('reports')">Reports</button>
+  </div>
+
+  <!-- ORDERS TAB -->
+  <div *ngIf="adminTab() === 'orders'">
+    <div class="admin-bar">
+      <div class="admin-stats">
+        <div class="stat"><span class="stat-num">{{ store.allOrders().length }}</span><span class="stat-label">Total orders</span></div>
+        <div class="stat"><span class="stat-num">{{ store.pendingReviewCount() }}</span><span class="stat-label">Awaiting approval</span></div>
+      </div>
+      <button class="btn-primary refresh-btn" (click)="store.loadAllOrders()">↻ Refresh</button>
+    </div>
+
+    <div class="orders-empty" *ngIf="store.allOrders().length === 0">
+      <p>No orders have been placed yet.</p>
+    </div>
+
+    <table class="admin-table" *ngIf="store.allOrders().length > 0">
+      <thead>
+        <tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let o of store.allOrders()">
+          <td><strong>#{{ o.id.substring(0, 8) | uppercase }}</strong><div class="muted-sm">{{ o.createdOnUtc | date: 'short' }}</div></td>
+          <td>{{ o.customerEmail }}</td>
+          <td><div *ngFor="let i of o.items" class="muted-sm">{{ i.quantity }} × {{ i.productName }}</div></td>
+          <td>{{ o.totalAmount | currency: 'INR' : 'symbol' : '1.0-0' }}</td>
+          <td>
+            <span class="status status-{{ o.status }}">{{ orderStatusLabel[o.status] }}</span>
+            <div class="muted-sm" *ngIf="o.reviewNote">Note: {{ o.reviewNote }}</div>
+          </td>
+          <td>
+            <div class="admin-actions" *ngIf="o.status === 3">
+              <button class="btn-approve" (click)="approve(o.id)">Approve</button>
+              <button class="btn-reject" (click)="reject(o.id)">Reject</button>
+            </div>
+            <span class="muted-sm" *ngIf="o.status !== 3">{{ o.reviewedBy ? 'by ' + o.reviewedBy : '—' }}</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- PRODUCTS TAB -->
+  <div *ngIf="adminTab() === 'products'">
+    <div class="admin-bar">
+      <div class="admin-stats">
+        <div class="stat"><span class="stat-num">{{ store.inventoryStats().productCount }}</span><span class="stat-label">Products</span></div>
+        <div class="stat"><span class="stat-num">{{ store.inventoryStats().stockUnits }}</span><span class="stat-label">Units in stock</span></div>
+        <div class="stat"><span class="stat-num">{{ store.inventoryStats().lowStock }}</span><span class="stat-label">Low stock (≤10)</span></div>
+      </div>
+      <button class="btn-primary refresh-btn" (click)="openNewProduct()">+ Add product</button>
+    </div>
+
+    <table class="admin-table">
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Pack</th><th>Cost</th><th>Price</th><th>Margin</th><th>Stock</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let p of store.products()">
+          <td><strong>{{ p.name }}</strong><div class="muted-sm">{{ p.brand }}</div></td>
+          <td>{{ riceTypeLabel[p.riceType] }}</td>
+          <td>{{ p.weightKg }}kg</td>
+          <td>{{ p.costPrice | currency: 'INR' : 'symbol' : '1.0-0' }}</td>
+          <td>{{ p.price | currency: 'INR' : 'symbol' : '1.0-0' }}</td>
+          <td>{{ (p.price - p.costPrice) | currency: 'INR' : 'symbol' : '1.0-0' }}</td>
+          <td><span [class.low-stock]="p.stock <= 10">{{ p.stock }}</span></td>
+          <td>
+            <div class="admin-actions">
+              <button class="btn-edit" (click)="openEditProduct(p)">Edit</button>
+              <button class="btn-reject" (click)="deleteProduct(p)">Delete</button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- REPORTS TAB -->
+  <div *ngIf="adminTab() === 'reports'">
+    <h3 class="report-title">Sales (from approved orders)</h3>
+    <div class="report-grid">
+      <div class="report-card revenue">
+        <span class="report-num">{{ store.salesStats().revenue | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        <span class="report-label">Total revenue (selling)</span>
+      </div>
+      <div class="report-card cost">
+        <span class="report-num">{{ store.salesStats().cost | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        <span class="report-label">Total cost (buying)</span>
+      </div>
+      <div class="report-card profit">
+        <span class="report-num">{{ store.salesStats().profit | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        <span class="report-label">Net profit</span>
+      </div>
+      <div class="report-card">
+        <span class="report-num">{{ store.salesStats().unitsSold }}</span>
+        <span class="report-label">Units sold</span>
+      </div>
+      <div class="report-card">
+        <span class="report-num">{{ store.salesStats().approvedOrders }}</span>
+        <span class="report-label">Approved orders</span>
+      </div>
+    </div>
+
+    <h3 class="report-title">Inventory valuation</h3>
+    <div class="report-grid">
+      <div class="report-card">
+        <span class="report-num">{{ store.inventoryStats().costValue | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        <span class="report-label">Stock value at cost</span>
+      </div>
+      <div class="report-card">
+        <span class="report-num">{{ store.inventoryStats().retailValue | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+        <span class="report-label">Stock value at retail</span>
+      </div>
+      <div class="report-card">
+        <span class="report-num">{{ store.inventoryStats().stockUnits }}</span>
+        <span class="report-label">Units on hand</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Product editor modal -->
+<div class="modal-overlay" *ngIf="productModalOpen()" (click)="productModalOpen.set(false)"></div>
+<div class="modal product-modal" *ngIf="productModalOpen()">
+  <div class="modal-head">
+    <h2>{{ editingProductId() ? 'Edit product' : 'Add product' }}</h2>
+    <button class="close" (click)="productModalOpen.set(false)">✕</button>
+  </div>
+
+  <form class="auth-form product-form" (ngSubmit)="saveProduct()">
+    <label>Name<input type="text" name="pn" [(ngModel)]="pName" /></label>
+    <div class="pay-row">
+      <label>Brand<input type="text" name="pb" [(ngModel)]="pBrand" /></label>
+      <label>
+        Rice type
+        <select name="prt" [(ngModel)]="pRiceType">
+          <option *ngFor="let t of riceTypeOptions" [value]="t.value">{{ t.label }}</option>
+        </select>
+      </label>
+    </div>
+    <label>Description<input type="text" name="pd" [(ngModel)]="pDescription" /></label>
+    <div class="pay-row">
+      <label>Cost price (₹)<input type="number" name="pcp" [(ngModel)]="pCostPrice" /></label>
+      <label>Selling price (₹)<input type="number" name="pp" [(ngModel)]="pPrice" /></label>
+    </div>
+    <div class="pay-row">
+      <label>Stock (units)<input type="number" name="ps" [(ngModel)]="pStock" /></label>
+      <label>Pack size (kg)<input type="number" name="pw" [(ngModel)]="pWeightKg" /></label>
+    </div>
+
+    <p class="auth-error" *ngIf="productError()">{{ productError() }}</p>
+    <button type="submit" class="btn-primary auth-submit">
+      {{ editingProductId() ? 'Save changes' : 'Create product' }}
+    </button>
+  </form>
+</div>
+
+<!-- Cart drawer -->
+<div class="drawer-overlay" *ngIf="cartOpen()" (click)="cartOpen.set(false)"></div>
+<aside class="drawer" [class.open]="cartOpen()">
+  <div class="drawer-head">
+    <h2>Your Cart</h2>
+    <button class="close" (click)="cartOpen.set(false)">✕</button>
+  </div>
+
+  <div class="drawer-body">
+    <p class="empty" *ngIf="store.cart().length === 0">Your cart is empty.</p>
+
+    <div class="cart-item" *ngFor="let i of store.cart()">
+      <div class="ci-info">
+        <strong>{{ i.productName }}</strong>
+        <span>{{ i.unitPrice | currency: 'INR' : 'symbol' : '1.0-0' }}</span>
+      </div>
+      <div class="ci-qty">
+        <button (click)="store.changeQty(i.productId, -1)">−</button>
+        <span>{{ i.quantity }}</span>
+        <button (click)="store.changeQty(i.productId, 1)">+</button>
+      </div>
+      <button class="ci-remove" (click)="store.removeFromCart(i.productId)">🗑</button>
+    </div>
+  </div>
+
+  <div class="drawer-foot" *ngIf="store.cart().length > 0">
+    <div class="total">
+      <span>Total</span>
+      <strong>{{ store.cartTotal() | currency: 'INR' : 'symbol' : '1.0-0' }}</strong>
+    </div>
+    <button class="btn-primary checkout" (click)="checkout()">Checkout</button>
+  </div>
+</aside>
+
+<!-- Auth modal -->
+<div class="modal-overlay" *ngIf="authOpen()" (click)="authOpen.set(false)"></div>
+<div class="modal" *ngIf="authOpen()">
+  <div class="modal-head">
+    <h2>{{ authMode() === 'login' ? 'Sign in' : 'Create account' }}</h2>
+    <button class="close" (click)="authOpen.set(false)">✕</button>
+  </div>
+
+  <form class="auth-form" (ngSubmit)="submitAuth()">
+    <label *ngIf="authMode() === 'register'">
+      Full name
+      <input type="text" name="fullName" [(ngModel)]="authFullName" required />
+    </label>
+    <label>
+      Email
+      <input type="email" name="email" [(ngModel)]="authEmail" required />
+    </label>
+    <label>
+      Password
+      <input type="password" name="password" [(ngModel)]="authPassword" required />
+    </label>
+
+    <p class="auth-error" *ngIf="authError()">{{ authError() }}</p>
+
+    <button type="submit" class="btn-primary auth-submit" [disabled]="authBusy()">
+      {{ authBusy() ? 'Please wait...' : (authMode() === 'login' ? 'Sign in' : 'Register') }}
+    </button>
+  </form>
+
+  <p class="auth-switch" *ngIf="authMode() === 'login'">
+    New here? <button (click)="openAuth('register')">Create an account</button>
+  </p>
+  <p class="auth-switch" *ngIf="authMode() === 'register'">
+    Already have an account? <button (click)="openAuth('login')">Sign in</button>
+  </p>
+</div>
+
+<!-- Payment modal -->
+<div class="modal-overlay" *ngIf="payOpen()" (click)="payOpen.set(false)"></div>
+<div class="modal pay-modal" *ngIf="payOpen()">
+  <div class="modal-head">
+    <h2>Payment</h2>
+    <button class="close" (click)="payOpen.set(false)">✕</button>
+  </div>
+
+  <div class="pay-amount">
+    Amount payable: <strong>{{ store.cartTotal() | currency: 'INR' : 'symbol' : '1.0-0' }}</strong>
+  </div>
+
+  <!-- Method tabs -->
+  <div class="pay-tabs">
+    <button
+      class="pay-tab"
+      [class.active]="payMethod() === 'card'"
+      (click)="payMethod.set('card'); payError.set('')"
+    >💳 Card</button>
+    <button
+      class="pay-tab"
+      [class.active]="payMethod() === 'upi'"
+      (click)="payMethod.set('upi'); payError.set('')"
+    >📱 UPI</button>
+  </div>
+
+  <!-- Card form -->
+  <form class="pay-form" *ngIf="payMethod() === 'card'" (ngSubmit)="submitPayment()">
+    <div class="card-type-toggle">
+      <label><input type="radio" name="ct" value="credit" [(ngModel)]="payCardType" /> Credit</label>
+      <label><input type="radio" name="ct" value="debit" [(ngModel)]="payCardType" /> Debit</label>
+    </div>
+    <label>
+      Card number
+      <input type="text" name="cn" maxlength="19" placeholder="4242 4242 4242 4242" [(ngModel)]="payCardNumber" />
+    </label>
+    <label>
+      Name on card
+      <input type="text" name="cname" placeholder="Full name" [(ngModel)]="payCardName" />
+    </label>
+    <div class="pay-row">
+      <label>
+        Expiry (MM/YY)
+        <input type="text" name="exp" maxlength="5" placeholder="08/28" [(ngModel)]="payCardExpiry" />
+      </label>
+      <label>
+        CVV
+        <input type="password" name="cvv" maxlength="4" placeholder="123" [(ngModel)]="payCardCvv" />
+      </label>
+    </div>
+
+    <p class="auth-error" *ngIf="payError()">{{ payError() }}</p>
+    <button type="submit" class="btn-primary auth-submit" [disabled]="payBusy()">
+      {{ payBusy() ? 'Processing…' : 'Pay ' + (store.cartTotal() | currency: 'INR' : 'symbol' : '1.0-0') }}
+    </button>
+  </form>
+
+  <!-- UPI form -->
+  <form class="pay-form" *ngIf="payMethod() === 'upi'" (ngSubmit)="submitPayment()">
+    <label>
+      UPI ID
+      <input type="text" name="upi" placeholder="name@okhdfcbank" [(ngModel)]="payUpiId" />
+    </label>
+    <div class="upi-hint">Works with Google Pay, PhonePe, Paytm, BHIM and any UPI app.</div>
+
+    <p class="auth-error" *ngIf="payError()">{{ payError() }}</p>
+    <button type="submit" class="btn-primary auth-submit" [disabled]="payBusy()">
+      {{ payBusy() ? 'Processing…' : 'Pay ' + (store.cartTotal() | currency: 'INR' : 'symbol' : '1.0-0') }}
+    </button>
+  </form>
+
+  <p class="pay-secure">🔒 This is a demo payment. No real money is charged.</p>
+</div>
