@@ -1,0 +1,70 @@
+# =============================================================================
+# Rice Store - CI-only Pipeline (build + test validation, no deploy)
+# =============================================================================
+# Lightweight pipeline for pull-request validation and branch builds. Good as a
+# required check before merging to main. No Docker push, no deployment.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '10.0.x'
+  nodeVersion: '20.x'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  # ---- .NET backend ----
+  - task: UseDotNet@2
+    displayName: 'Install .NET SDK'
+    inputs:
+      packageType: 'sdk'
+      version: '$(dotnetVersion)'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore'
+    inputs:
+      command: 'restore'
+      projects: 'RiceStore.sln'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Build'
+    inputs:
+      command: 'build'
+      projects: 'RiceStore.sln'
+      arguments: '--configuration $(buildConfiguration) --no-restore'
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Test'
+    inputs:
+      command: 'test'
+      projects: '**/*Tests.csproj'
+      arguments: '--configuration $(buildConfiguration) --no-build'
+    continueOnError: true
+
+  # ---- Angular frontend ----
+  - task: NodeTool@0
+    displayName: 'Install Node.js'
+    inputs:
+      versionSpec: '$(nodeVersion)'
+
+  - script: npm ci
+    displayName: 'npm ci'
+    workingDirectory: 'frontend/rice-store-web'
+
+  - script: npm run build
+    displayName: 'ng build'
+    workingDirectory: 'frontend/rice-store-web'

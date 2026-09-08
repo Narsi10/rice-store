@@ -1,0 +1,50 @@
+# =============================================================================
+# Rice Store - Release Pipeline (deploy pre-built images to environments)
+# =============================================================================
+# Triggered after images are pushed. Pulls images and runs docker compose on the
+# target server over SSH. Uses Azure DevOps "environments" so you can require
+# manual approval before production.
+#
+# Required variables / service connections:
+#   - deploySshServiceConnection : SSH connection to your Linux server
+# =============================================================================
+
+trigger: none   # this pipeline is triggered manually or by the CI pipeline
+
+parameters:
+  - name: environment
+    displayName: 'Target environment'
+    type: string
+    default: 'staging'
+    values:
+      - staging
+      - production
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Deploy
+    displayName: 'Deploy to ${{ parameters.environment }}'
+    jobs:
+      - deployment: Deploy
+        displayName: 'Deploy rice-store'
+        environment: 'ricestore-${{ parameters.environment }}'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - task: SSH@0
+                  displayName: 'docker compose up on ${{ parameters.environment }}'
+                  inputs:
+                    sshEndpoint: '$(deploySshServiceConnection)'
+                    runOptions: 'inline'
+                    inline: |
+                      set -e
+                      cd /opt/rice-store
+                      git pull
+                      docker compose -f docker-compose.prod.yml --env-file .env pull
+                      docker compose -f docker-compose.prod.yml --env-file .env up -d
+                      docker compose -f docker-compose.prod.yml ps
+                      docker image prune -f

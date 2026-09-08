@@ -1,0 +1,16 @@
+# Caddy automatically obtains and renews free Let's Encrypt TLS certificates.
+# Replace the domains below with your own once you have them pointed at the server.
+#
+# Frontend:  https://ricestore.example.com   -> nginx frontend container
+# API:       https://api.ricestore.example.com -> gateway container
+#
+# Until you have a domain, Caddy can serve on the server IP over HTTP only
+# (see the ":80" block at the bottom, used when no domain is configured).
+
+{$SITE_DOMAIN:ricestore.example.com} {
+    reverse_proxy frontend:80
+}
+
+api.{$SITE_DOMAIN:ricestore.example.com} {
+    reverse_proxy gateway:8080
+}

@@ -1,0 +1,60 @@
+# =============================================================================
+# Reusable template: build, test, and containerize a single .NET service.
+# =============================================================================
+# Usage from a pipeline:
+#   - template: templates/dotnet-service-template.yml
+#     parameters:
+#       serviceName: 'catalog'
+#       projectPath: 'services/Catalog/Catalog.API/Catalog.API.csproj'
+#       dockerfilePath: 'services/Catalog/Catalog.API/Dockerfile'
+# =============================================================================
+
+parameters:
+  - name: serviceName
+    type: string
+  - name: projectPath
+    type: string
+  - name: dockerfilePath
+    type: string
+  - name: buildConfiguration
+    type: string
+    default: 'Release'
+  - name: dotnetVersion
+    type: string
+    default: '10.0.x'
+  - name: pushImage
+    type: boolean
+    default: false
+
+steps:
+  - task: UseDotNet@2
+    displayName: '[${{ parameters.serviceName }}] Install .NET SDK'
+    inputs:
+      packageType: 'sdk'
+      version: '${{ parameters.dotnetVersion }}'
+
+  - task: DotNetCoreCLI@2
+    displayName: '[${{ parameters.serviceName }}] Restore'
+    inputs:
+      command: 'restore'
+      projects: '${{ parameters.projectPath }}'
+
+  - task: DotNetCoreCLI@2
+    displayName: '[${{ parameters.serviceName }}] Build'
+    inputs:
+      command: 'build'
+      projects: '${{ parameters.projectPath }}'
+      arguments: '--configuration ${{ parameters.buildConfiguration }} --no-restore'
+
+  - ${{ if eq(parameters.pushImage, true) }}:
+      - task: Docker@2
+        displayName: '[${{ parameters.serviceName }}] Build & push image'
+        inputs:
+          command: 'buildAndPush'
+          repository: '$(imageRegistry)/ricestore-${{ parameters.serviceName }}'
+          dockerfile: '${{ parameters.dockerfilePath }}'
+          containerRegistry: '$(dockerRegistryServiceConnection)'
+          buildContext: '$(Build.SourcesDirectory)'
+          tags: |
+            $(Build.BuildId)
+            latest

@@ -1,0 +1,217 @@
+# =============================================================================
+# Rice Store - Main CI/CD Pipeline (YAML)
+# =============================================================================
+# Builds & tests all .NET microservices + the Angular frontend, builds Docker
+# images, pushes them to a container registry, and deploys to the server.
+#
+# Set these pipeline variables (Pipelines > Library or pipeline settings):
+#   - dockerRegistryServiceConnection : service connection to ACR/Docker Hub
+#   - imageRegistry                   : e.g. ricestore.azurecr.io
+#   - deploySshServiceConnection      : SSH service connection to the server
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    exclude:
+      - docs/**
+      - README.md
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '10.0.x'
+  nodeVersion: '20.x'
+  # Overridden by pipeline variables in the UI:
+  imageRegistry: '$(imageRegistry)'
+  imageTag: '$(Build.BuildId)'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build & Test'
+    jobs:
+      # ---- Backend: build + test all .NET services ----
+      - job: BuildBackend
+        displayName: 'Build .NET microservices'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK'
+            inputs:
+              packageType: 'sdk'
+              version: '$(dotnetVersion)'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore'
+            inputs:
+              command: 'restore'
+              projects: 'RiceStore.sln'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build solution'
+            inputs:
+              command: 'build'
+              projects: 'RiceStore.sln'
+              arguments: '--configuration $(buildConfiguration) --no-restore'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run tests'
+            inputs:
+              command: 'test'
+              projects: '**/*Tests.csproj'
+              arguments: '--configuration $(buildConfiguration) --no-build --collect:"XPlat Code Coverage"'
+            continueOnError: true  # no test projects yet; remove once tests exist
+
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: 'VSTest'
+              testResultsFiles: '**/*.trx'
+              failTaskOnFailedTests: false
+
+      # ---- Frontend: build the Angular app ----
+      - job: BuildFrontend
+        displayName: 'Build Angular frontend'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Install Node.js'
+            inputs:
+              versionSpec: '$(nodeVersion)'
+
+          - script: npm ci
+            displayName: 'npm ci'
+            workingDirectory: 'frontend/rice-store-web'
+
+          - script: npm run build
+            displayName: 'ng build (production)'
+            workingDirectory: 'frontend/rice-store-web'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish frontend artifact'
+            inputs:
+              PathtoPublish: 'frontend/rice-store-web/dist'
+              ArtifactName: 'frontend-dist'
+
+  # ---------------------------------------------------------------------------
+  - stage: DockerBuildPush
+    displayName: 'Build & Push Docker images'
+    dependsOn: Build
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - job: BuildImages
+        displayName: 'Build & push all images'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          matrix:
+            identity:
+              serviceName: 'identity'
+              dockerfilePath: 'services/Identity/Identity.API/Dockerfile'
+            catalog:
+              serviceName: 'catalog'
+              dockerfilePath: 'services/Catalog/Catalog.API/Dockerfile'
+            cart:
+              serviceName: 'cart'
+              dockerfilePath: 'services/Cart/Cart.API/Dockerfile'
+            inventory:
+              serviceName: 'inventory'
+              dockerfilePath: 'services/Inventory/Inventory.API/Dockerfile'
+            order:
+              serviceName: 'order'
+              dockerfilePath: 'services/Order/Order.API/Dockerfile'
+            payment:
+              serviceName: 'payment'
+              dockerfilePath: 'services/Payment/Payment.API/Dockerfile'
+            notification:
+              serviceName: 'notification'
+              dockerfilePath: 'services/Notification/Notification.API/Dockerfile'
+            gateway:
+              serviceName: 'gateway'
+              dockerfilePath: 'gateway/ApiGateway/Dockerfile'
+        steps:
+          - task: Docker@2
+            displayName: 'Build & push $(serviceName)'
+            inputs:
+              command: 'buildAndPush'
+              repository: '$(imageRegistry)/ricestore-$(serviceName)'
+              dockerfile: '$(dockerfilePath)'
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+              buildContext: '$(Build.SourcesDirectory)'
+              tags: |
+                $(imageTag)
+                latest
+
+      # frontend image has its own build context
+      - job: BuildFrontendImage
+        displayName: 'Build & push frontend image'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Build & push frontend'
+            inputs:
+              command: 'buildAndPush'
+              repository: '$(imageRegistry)/ricestore-frontend'
+              dockerfile: 'frontend/rice-store-web/Dockerfile'
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+              buildContext: 'frontend/rice-store-web'
+              tags: |
+                $(imageTag)
+                latest
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DockerBuildPush
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - deployment: DeployStaging
+        displayName: 'Deploy to staging server'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'ricestore-staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Pull latest images and docker compose up on staging"
+                  displayName: 'Deploy (placeholder — see deploy job below)'
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProduction
+    displayName: 'Deploy to Production'
+    dependsOn: DockerBuildPush
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployProd
+        displayName: 'Deploy to production server'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'ricestore-production'   # add approvals on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: SSH@0
+                  displayName: 'Deploy via SSH (docker compose)'
+                  inputs:
+                    sshEndpoint: '$(deploySshServiceConnection)'
+                    runOptions: 'inline'
+                    inline: |
+                      cd /opt/rice-store
+                      git pull origin main
+                      docker compose -f docker-compose.prod.yml --env-file .env pull
+                      docker compose -f docker-compose.prod.yml --env-file .env up -d
+                      docker image prune -f

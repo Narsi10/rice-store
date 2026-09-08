@@ -1,0 +1,23 @@
+# Build output
+**/bin/
+**/obj/
+**/dist/
+**/.angular/
+
+# Node
+**/node_modules/
+
+# Secrets / local settings (never commit credentials)
+**/appsettings.*.local.json
+*.env
+.env
+secrets.json
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
